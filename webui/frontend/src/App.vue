@@ -197,8 +197,7 @@ async function logout() {
 }
 
 async function fetchTasks() {
-  const res = await fetch(`${API_BASE}/api/tasks`, {
-      credentials: 'include', credentials: 'include' })
+  const res = await fetch(`${API_BASE}/api/tasks`, { credentials: 'include' })
   if (!res.ok) throw new Error('加载历史任务失败')
   tasks.value = await res.json()
 }
@@ -377,11 +376,6 @@ async function pushCodexTokensToProxy() {
 }
 
 async function checkRemoteStatus() {
-  if (!codexPushForm.api_base_url || !codexPushForm.api_key) {
-    settingsError.value = '请先填写管理代理地址和密钥'
-    return
-  }
-
   checkingRemoteStatus.value = true
   settingsError.value = ''
   remoteCheckResults.value = []
@@ -1047,19 +1041,21 @@ let timer = null
 let spinnerTimer = null
 let accountsTimer = null
 onMounted(async () => {
+  await checkSession()
+  if (!authenticated.value) return
   try {
     await fetchTasks()
   } catch (e) {
     errorMsg.value = e.message
   }
   timer = setInterval(() => {
-    fetchTasks().catch(() => {})
+    if (authenticated.value) fetchTasks().catch(() => {})
   }, 3000)
   spinnerTimer = setInterval(() => {
     if (canStop.value) spinnerStep.value = (spinnerStep.value + 1) % 1000
   }, 500)
   accountsTimer = setInterval(() => {
-    if (page.value === 'accounts') fetchAccounts().catch(() => {})
+    if (authenticated.value && page.value === 'accounts') fetchAccounts().catch(() => {})
   }, 2000)
 })
 
@@ -1075,7 +1071,31 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div v-if="!authChecked" class="auth-shell">
+    <div class="auth-card">
+      <div class="auth-badge">0k-code-x</div>
+      <div class="auth-title">正在检查登录状态</div>
+      <p class="auth-subtitle">请稍候…</p>
+    </div>
+  </div>
+  <div v-else-if="!authenticated" class="auth-shell">
+    <div class="auth-card">
+      <div class="auth-badge">0k-code-x</div>
+      <h1 class="auth-title">欢迎回来</h1>
+      <p class="auth-subtitle">请输入账号和密码后继续访问控制台。</p>
+      <div class="form-row">
+        <label>用户名</label>
+        <input v-model="authForm.username" autocomplete="username" />
+      </div>
+      <div class="form-row">
+        <label>密码</label>
+        <input v-model="authForm.password" type="password" autocomplete="current-password" @keyup.enter="login" />
+      </div>
+      <p v-if="authError" class="auth-error">{{ authError }}</p>
+      <button class="btn btn-primary auth-submit" :disabled="authLoading" @click="login">{{ authLoading ? '登录中...' : '进入控制台' }}</button>
+    </div>
+  </div>
+  <div v-else class="page">
     <Transition name="notice-pop">
       <div v-if="opNotice.show" class="op-notice" :class="`notice-${opNotice.type}`">{{ opNotice.text }}</div>
     </Transition>
@@ -1087,6 +1107,7 @@ onUnmounted(() => {
         <button class="btn" :class="{ active: page === 'auto-maintain' }" @click="switchPage('auto-maintain')">自动维护</button>
         <button class="btn" :class="{ active: page === 'settings' }" @click="switchPage('settings')">设置</button>
         <div class="status">{{ statusLabel }}</div>
+        <button class="btn" @click="logout">退出</button>
       </div>
     </header>
 
