@@ -1,0 +1,23 @@
+{
+  "_comment": "ChatGPT(DuckMail)",
+
+  "total_accounts": 5,
+
+  "duckmail_api_base": "",
+  "duckmail_bearer": "",
+
+  "email_backend": "cfemail",
+  "cfemail_url": "",
+  "cfemail_password": "",
+
+  "proxy": "",
+
+  "token_json_dir": "codex_tokens",
+  "output_file": "registered_accounts.txt",
+  "enable_oauth": true,
+  "oauth_required": true,
+  "oauth_issuer": "https://auth.openai.com",
+  "oauth_redirect_uri": "http://localhost:1455/auth/callback",
+  "upload_api_url": "",
+  "upload_api_token": ""
+}

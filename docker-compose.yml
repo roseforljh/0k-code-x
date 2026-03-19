@@ -1,0 +1,34 @@
+services:
+  frontend-build:
+    build:
+      context: .
+      dockerfile: webui/frontend/Dockerfile
+      args:
+        VITE_API_BASE: /api
+    command: ["/bin/true"]
+
+  app:
+    build:
+      context: .
+      dockerfile: webui/backend/Dockerfile
+    depends_on:
+      frontend-build:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      TOKEN_JSON_DIR: /app/codex_tokens
+      REMOTE_API_BASE_URL: ${REMOTE_API_BASE_URL}
+      REMOTE_API_KEY: ${REMOTE_API_KEY}
+      AUTO_MAINTAIN_ENABLED: ${AUTO_MAINTAIN_ENABLED:-true}
+      AUTO_MAINTAIN_INTERVAL_SECONDS: ${AUTO_MAINTAIN_INTERVAL_SECONDS:-1800}
+      AUTO_MAINTAIN_TARGET_COUNT: ${AUTO_MAINTAIN_TARGET_COUNT:-50}
+      AUTO_MAINTAIN_MAX_WORKERS: ${AUTO_MAINTAIN_MAX_WORKERS:-3}
+      CLIPROXY_API_BASE_URL: ${CLIPROXY_API_BASE_URL}
+      CLIPROXY_API_KEY: ${CLIPROXY_API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+      - ./codex_tokens:/app/codex_tokens
+    restart: unless-stopped

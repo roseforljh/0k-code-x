@@ -1,0 +1,10 @@
+/.env
+/.claude/
+/codex_tokens/
+/output/
+/_tmp_CLIProxyAPI/
+/_tmp_CPAMC/
+/__pycache__/
+/webui/frontend/node_modules/
+/webui/frontend/dist/
+*.pyc
