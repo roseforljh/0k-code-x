@@ -1,19 +1,10 @@
 services:
-  frontend-build:
-    build:
-      context: .
-      dockerfile: webui/frontend/Dockerfile
-      args:
-        VITE_API_BASE: /api
-    command: ["/bin/true"]
-
   app:
     build:
       context: .
       dockerfile: webui/backend/Dockerfile
-    depends_on:
-      frontend-build:
-        condition: service_completed_successfully
+      args:
+        VITE_API_BASE: /api
     env_file:
       - .env
     environment:
@@ -26,6 +17,10 @@ services:
       AUTO_MAINTAIN_MAX_WORKERS: ${AUTO_MAINTAIN_MAX_WORKERS:-3}
       CLIPROXY_API_BASE_URL: ${CLIPROXY_API_BASE_URL}
       CLIPROXY_API_KEY: ${CLIPROXY_API_KEY}
+      CFEMAIL_URL: ${CFEMAIL_URL}
+      CFEMAIL_PASSWORD: ${CFEMAIL_PASSWORD}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID}
+      PROXY: ${PROXY}
     ports:
       - "8000:8000"
     volumes:
