@@ -380,6 +380,21 @@ def _save_codex_tokens(email: str, tokens: dict):
     os.makedirs(_TOKEN_DIR, exist_ok=True)
     os.makedirs(_OUTPUT_DIR, exist_ok=True)
 
+def _delete_codex_tokens(email: str):
+    try:
+        if not os.path.isdir(TOKEN_JSON_DIR):
+            return
+        prefix = f"{email}-"
+        for name in os.listdir(TOKEN_JSON_DIR):
+            if name.startswith(prefix) and name.endswith('.json'):
+                try:
+                    os.remove(os.path.join(TOKEN_JSON_DIR, name))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
     if not access_token:
         return
 
@@ -682,6 +697,72 @@ def _random_name():
     return f"{first} {last}"
 
 
+def _classify_error(message: str) -> str:
+    m = str(message or "").lower()
+    if "proxy" in m:
+        return "proxy_failed"
+    if "homepage" in m or "403" in m:
+        return "homepage_blocked"
+    if "csrf" in m:
+        return "csrf_failed"
+    if "otp" in m and ("timeout" in m or "未能获取验证码" in m):
+        return "otp_timeout"
+    if "验证码失败" in m or "wrong_email_otp" in m:
+        return "otp_invalid"
+    if "create account" in m or "create_account" in m:
+        return "create_account_failed"
+    if "oauth" in m or "token" in m:
+        return "oauth_failed"
+    return "unknown_error"
+
+
+def _normalize_email_timestamp(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def _is_message_new_enough(msg: dict, since_ts: float | None) -> bool:
+    if not since_ts:
+        return True
+    candidates = [msg.get('created_at'), msg.get('createdAt'), msg.get('date'), msg.get('received_at'), msg.get('receivedAt'), msg.get('updated_at')]
+    for v in candidates:
+        ts = _normalize_email_timestamp(v)
+        if ts is not None:
+            return ts >= since_ts
+    return True
+
+
+def _probe_proxy(proxy: str | None, timeout: int = 12):
+    if not proxy:
+        return True, 'no proxy configured'
+    try:
+        sess = curl_requests.Session(impersonate='chrome131')
+        sess.proxies = {'http': proxy, 'https': proxy}
+        r = sess.get('https://chatgpt.com/', timeout=timeout, allow_redirects=True, impersonate='chrome131', headers={
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Upgrade-Insecure-Requests': '1',
+        })
+        if r.status_code == 200:
+            return True, 'proxy ok'
+        return False, f'proxy probe got status {r.status_code}'
+    except Exception as e:
+        return False, f'proxy probe failed: {e}'
+
+
 def _random_birthdate():
     y = random.randint(1985, 2002)
     m = random.randint(1, 12)
@@ -894,26 +975,27 @@ class ChatGPTRegister:
                 return code
         return None
 
-    def wait_for_verification_email(self, mail_token: str, timeout: int = 120):
+    def wait_for_verification_email(self, mail_token: str, timeout: int = 120, since_ts: float | None = None, tried_codes=None):
         """等待并提取 OpenAI 验证码"""
         self._print(f"[OTP] 等待验证码邮件 (最多 {timeout}s)...")
         start_time = time.time()
+        tried = set(tried_codes or [])
 
         while time.time() - start_time < timeout:
             messages = self._fetch_emails_cfemail(mail_token)
 
             if messages and len(messages) > 0:
-                first_msg = messages[0]
-                msg_id = first_msg.get("id") or first_msg.get("@id")
-                subject = first_msg.get("subject")
-
-                if msg_id:
+                filtered = [m for m in messages if _is_message_new_enough(m, since_ts)]
+                for msg in filtered:
+                    msg_id = msg.get("id") or msg.get("@id")
+                    subject = msg.get("subject")
+                    if not msg_id:
+                        continue
                     detail = self._fetch_email_detail_cfemail(mail_token, msg_id)
                     content = detail.get("content") if detail else ""
-
                     if content or subject:
                         code = self._extract_verification_code(content, subject)
-                        if code:
+                        if code and code not in tried:
                             self._print(f"[OTP] 验证码: {code}")
                             return code
 
@@ -926,24 +1008,44 @@ class ChatGPTRegister:
 
     # ==================== 注册流程 ====================
 
-    def visit_homepage(self):
+    def visit_homepage(self, retries: int = 2):
         url = f"{self.BASE}/"
-        r = self.session.get(url, headers={
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Upgrade-Insecure-Requests": "1",
-        }, allow_redirects=True)
-        self._log("0. Visit homepage", "GET", url, r.status_code,
-                   {"cookies_count": len(self.session.cookies)})
+        last_status = None
+        last_text = ""
+        for attempt in range(retries + 1):
+            r = self.session.get(url, headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Upgrade-Insecure-Requests": "1",
+            }, allow_redirects=True)
+            last_status = r.status_code
+            last_text = (r.text or "")[:200]
+            self._log("0. Visit homepage", "GET", url, r.status_code,
+                       {"cookies_count": len(self.session.cookies), "attempt": attempt + 1})
+            if r.status_code == 200:
+                return True
+            time.sleep(min(1.5 * (attempt + 1), 3.0))
+        raise Exception(f"homepage blocked ({last_status}): {last_text}")
 
-    def get_csrf(self) -> str:
+    def get_csrf(self, retries: int = 2) -> str:
         url = f"{self.BASE}/api/auth/csrf"
-        r = self.session.get(url, headers={"Accept": "application/json", "Referer": f"{self.BASE}/"})
-        data = r.json()
-        token = data.get("csrfToken", "")
-        self._log("1. Get CSRF", "GET", url, r.status_code, data)
-        if not token:
-            raise Exception("Failed to get CSRF token")
-        return token
+        last_error = None
+        for attempt in range(retries + 1):
+            r = self.session.get(url, headers={"Accept": "application/json", "Referer": f"{self.BASE}/"})
+            content_type = (r.headers.get("content-type") or "").lower()
+            data = None
+            if r.status_code == 200 and "application/json" in content_type:
+                try:
+                    data = r.json()
+                except Exception as e:
+                    last_error = f"csrf json parse failed: {e}"
+            else:
+                last_error = f"csrf bad response status={r.status_code} ct={content_type} body={(r.text or '')[:160]}"
+            self._log("1. Get CSRF", "GET", url, r.status_code, data or {"attempt": attempt + 1, "content_type": content_type, "preview": (r.text or '')[:160]})
+            token = (data or {}).get("csrfToken", "") if isinstance(data, dict) else ""
+            if token:
+                return token
+            time.sleep(min(1.0 * (attempt + 1), 2.5))
+        raise Exception(last_error or "csrf_failed")
 
     def signin(self, email: str, csrf: str) -> str:
         url = f"{self.BASE}/api/auth/signin/openai"
@@ -1085,7 +1187,8 @@ class ChatGPTRegister:
 
         if need_otp:
             # 使用 CFEmail 等待验证码
-            otp_code = self.wait_for_verification_email(mail_token)
+            otp_since = time.time() - 2
+            otp_code = self.wait_for_verification_email(mail_token, since_ts=otp_since)
             if not otp_code:
                 raise Exception("未能获取验证码")
 
@@ -1095,7 +1198,7 @@ class ChatGPTRegister:
                 self._print("验证码失败，重试...")
                 self.send_otp()
                 _random_delay(1.0, 2.0)
-                otp_code = self.wait_for_verification_email(mail_token, timeout=60)
+                otp_code = self.wait_for_verification_email(mail_token, timeout=60, since_ts=time.time()-2, tried_codes={otp_code})
                 if not otp_code:
                     raise Exception("重试后仍未获取验证码")
                 _random_delay(0.3, 0.8)
@@ -1601,6 +1704,7 @@ class ChatGPTRegister:
             otp_deadline = time.time() + 120
 
             while time.time() < otp_deadline and not otp_success:
+                otp_since = time.time() - 2
                 messages = self._fetch_emails_cfemail(mail_token) or []
 
                 candidate_codes = []
@@ -1744,6 +1848,9 @@ def _register_one(idx, total, proxy, output_file):
     """单个注册任务 (在线程中运行) - 使用 CFEmail 临时邮箱"""
     reg = None
     try:
+        ok_probe, probe_msg = _probe_proxy(proxy)
+        if not ok_probe:
+            raise Exception(probe_msg)
         reg = ChatGPTRegister(proxy=proxy, tag=f"{idx}")
 
         # 1. 创建 CFEmail 临时邮箱
@@ -1782,10 +1889,17 @@ def _register_one(idx, total, proxy, output_file):
                     raise Exception(f"{msg}（oauth_required=true）")
                 reg._print(f"[OAuth] {msg}（按配置继续）")
 
-        # 4. 线程安全写入结果
+        # 4. 只有 OAuth 成功才写入结果
+        if not oauth_ok:
+            try:
+                _delete_codex_tokens(email)
+            except Exception:
+                pass
+            raise Exception("oauth_failed: registration completed but token unavailable")
+
         with _file_lock:
             with open(output_file, "a", encoding="utf-8") as out:
-                out.write(f"{email}----{chatgpt_password}----{email_pwd}----oauth={'ok' if oauth_ok else 'fail'}\n")
+                out.write(f"{email}----{chatgpt_password}----{email_pwd}----oauth=ok\n")
 
         with _print_lock:
             print(f"\n[OK] [{tag}] {email} 注册成功!")
@@ -1793,10 +1907,11 @@ def _register_one(idx, total, proxy, output_file):
 
     except Exception as e:
         error_msg = str(e)
+        error_type = _classify_error(error_msg)
         with _print_lock:
-            print(f"\n[FAIL] [{idx}] 注册失败: {error_msg}")
+            print(f"\n[FAIL] [{idx}] 注册失败[{error_type}]: {error_msg}")
             traceback.print_exc()
-        return False, None, error_msg
+        return False, None, f"{error_type}: {error_msg}"
 
 
 def run_batch(total_accounts: int = 3, output_file=None,
@@ -1898,6 +2013,8 @@ def main():
 
     if proxy:
         print(f"[Info] 使用代理: {proxy}")
+        ok_probe, probe_msg = _probe_proxy(proxy)
+        print(f"[Info] 代理预检查: {'通过' if ok_probe else '失败'} - {probe_msg}")
     else:
         print("[Info] 不使用代理")
 

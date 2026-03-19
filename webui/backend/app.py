@@ -447,6 +447,38 @@ def _delete_remote_codex_files(base_url: str, api_key: str, filenames: List[str]
     return deleted
 
 
+def _collect_local_account_statuses(strict: bool = True) -> List[Dict[str, Any]]:
+    rows = _read_accounts_raw()
+    if not rows:
+        return []
+    token_index = _build_token_index(force=True)
+    results: List[Dict[str, Any]] = []
+    worker_count = min(max(1, len(rows)), 16)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_map = {executor.submit(_get_token_status_for_email, str(r.get("email") or ""), strict, token_index): r for r in rows}
+        for future in as_completed(future_map):
+            row = future_map[future]
+            email = str(row.get("email") or "")
+            try:
+                status = future.result()
+            except Exception as ex:
+                status = {"status": "unknown", "message": f"local strict check failed: {ex}", "error_code": "42302"}
+            results.append({"email": email, "token_status": status})
+    return results
+
+
+def _cleanup_invalid_local_accounts(strict: bool = True) -> Dict[str, Any]:
+    statuses = _collect_local_account_statuses(strict=strict)
+    removed = []
+    for item in statuses:
+        email = str(item.get("email") or "")
+        status = str(((item.get("token_status") or {}).get("status") or "unknown")).lower()
+        if status in {"expired", "invalid", "missing"}:
+            _delete_local_account_and_tokens_by_email(email)
+            removed.append({"email": email, "status": status})
+    return {"checked": len(statuses), "removed": removed, "remaining": max(0, len(statuses) - len(removed))}
+
+
 def _perform_auto_maintain_once():
     settings = _load_auto_maintain_settings()
     base_url = settings.get("api_base_url") or ""
@@ -454,10 +486,16 @@ def _perform_auto_maintain_once():
     if not base_url or not api_key:
         raise RuntimeError("missing CLIPROXY_API_BASE_URL or CLIPROXY_API_KEY")
 
+    _auto_log("[auto] checking local accounts")
+    local_cleanup = _cleanup_invalid_local_accounts(strict=True)
+    if local_cleanup.get("removed"):
+        _auto_log(f"[auto] removed invalid local accounts: {len(local_cleanup['removed'])}")
+    else:
+        _auto_log(f"[auto] local accounts checked: {local_cleanup.get('checked', 0)}, removed: 0")
+
     _auto_log("[auto] checking remote codex status")
     results = _collect_remote_codex_status(base_url, api_key)
     invalid_names = [x.get("name") for x in results if int(x.get("status_code") or 0) != 200 and x.get("name")]
-    valid_count = sum(1 for x in results if int(x.get("status_code") or 0) == 200)
 
     if invalid_names:
         _auto_log(f"[auto] deleting invalid remote codex files: {len(invalid_names)}")
@@ -466,8 +504,8 @@ def _perform_auto_maintain_once():
             _delete_local_account_and_tokens_by_filename(name)
         _auto_log(f"[auto] deleted invalid remote codex files: {len(deleted)}")
 
-    remote_valid_count = len(_collect_remote_codex_status(base_url, api_key))
-    remote_valid_count = sum(1 for x in _collect_remote_codex_status(base_url, api_key) if int(x.get("status_code") or 0) == 200)
+    status_rows = _collect_remote_codex_status(base_url, api_key)
+    remote_valid_count = sum(1 for x in status_rows if int(x.get("status_code") or 0) == 200)
 
     while remote_valid_count < int(settings["target_count"]):
         missing = int(settings["target_count"]) - remote_valid_count
@@ -484,6 +522,10 @@ def _perform_auto_maintain_once():
                 ok, _email, err = future.result()
                 if not ok:
                     _auto_log(f"[auto] register failed: {err}")
+
+        local_cleanup = _cleanup_invalid_local_accounts(strict=True)
+        if local_cleanup.get("removed"):
+            _auto_log(f"[auto] post-register removed invalid local accounts: {len(local_cleanup['removed'])}")
 
         created_files_after = {x.get("name") for x in _list_local_codex_token_files() if x.get("name")}
         new_files = [name for name in created_files_after if name not in created_files_before]
