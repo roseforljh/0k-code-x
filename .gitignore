@@ -9,3 +9,11 @@
 /webui/frontend/dist/
 *.pyc
 deploy.log
+
+AGENTS.md
+CLAUDE.md
+*.log
+*.tmp
+.DS_Store
+*.swp
+registered_accounts.txt
