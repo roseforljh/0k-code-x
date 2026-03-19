@@ -1032,8 +1032,24 @@ onUnmounted(() => {
     </header>
 
     <Transition name="page-fade" mode="out-in">
-      <div :key="`${page}-${pageAnimKey}`">
+      <div class="page-container" :key="`${page}-${pageAnimKey}`">
         <template v-if="page === 'dashboard'">
+          <div class="dashboard-top-section">
+            <section class="card stats-card">
+              <h2>实时统计</h2>
+              <div class="stats">
+                <div class="stat"><span>成功</span><strong class="text-success">{{ currentStats.success }}</strong></div>
+                <div class="stat"><span>失败</span><strong class="text-danger">{{ currentStats.fail }}</strong></div>
+                <div class="stat"><span>进行中</span><strong>{{ Math.max(currentStats.started - currentStats.done, 0) }}</strong></div>
+              </div>
+              <div class="result-line" v-if="['completed','failed','stopped'].includes(activeStatus)">
+                <span class="text-success">成功 {{ currentStats.success }}</span>
+                <span class="text-danger">失败 {{ currentStats.fail }}</span>
+                <span>成功率 {{ successRate }}%</span>
+              </div>
+            </section>
+          </div>
+
           <div class="grid">
             <section class="card form-card">
               <h2>任务配置</h2>
@@ -1060,20 +1076,6 @@ onUnmounted(() => {
               <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
             </section>
 
-            <section class="card stats-card">
-              <h2>实时统计</h2>
-              <div class="stats">
-                <div class="stat"><span>成功</span><strong class="text-success">{{ currentStats.success }}</strong></div>
-                <div class="stat"><span>失败</span><strong class="text-danger">{{ currentStats.fail }}</strong></div>
-                <div class="stat"><span>进行中</span><strong>{{ Math.max(currentStats.started - currentStats.done, 0) }}</strong></div>
-              </div>
-              <div class="result-line" v-if="['completed','failed','stopped'].includes(activeStatus)">
-                <span class="text-success">成功 {{ currentStats.success }}</span>
-                <span class="text-danger">失败 {{ currentStats.fail }}</span>
-                <span>成功率 {{ successRate }}%</span>
-              </div>
-            </section>
-
             <section class="card logs-card">
               <h2 class="process-title">
                 执行进度
@@ -1097,7 +1099,7 @@ onUnmounted(() => {
 
             <section class="card history-card">
               <h2>历史任务</h2>
-              <div class="table-wrap">
+              <div class="table-wrap staggered-fade" style="animation-delay: 0.1s">
                 <table>
                   <thead><tr><th>Task ID</th><th>状态</th><th>进度</th><th>成功</th><th>失败</th><th>操作</th></tr></thead>
                   <tbody>
@@ -1123,7 +1125,7 @@ onUnmounted(() => {
               <h2>账号管理（删查）</h2>
               <p v-if="accountError" class="error">{{ accountError }}</p>
 
-              <div class="account-summary-grid">
+              <div class="account-summary-grid staggered-fade">
                 <div class="summary-tile">
                   <span>总账号数量</span>
                   <strong>{{ accountSummary.total_accounts }}</strong>
@@ -1138,7 +1140,7 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <div class="actions action-bar">
+              <div class="actions action-bar staggered-fade">
                 <button class="btn" :class="{ active: accountFilter === 'all' }" @click="accountFilter = 'all'">全部</button>
                 <button class="btn" :class="{ active: accountFilter === 'normal' }" @click="accountFilter = 'normal'">正常</button>
                 <button class="btn" :class="{ active: accountFilter === 'abnormal' }" @click="accountFilter = 'abnormal'">异常</button>
@@ -1154,7 +1156,7 @@ onUnmounted(() => {
                 <button class="btn" :disabled="accounts.length === 0 || exportingAccounts" @click="exportAccountsTxt">{{ exportingAccounts ? '导出中...' : '导出TXT(前N条)' }}</button>
               </div>
 
-              <div class="table-wrap">
+              <div class="table-wrap staggered-fade" style="animation-delay: 0.1s">
                 <table>
                   <thead>
                     <tr><th><input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" /></th><th>Email</th><th>账号密码</th><th>Token状态</th><th>Token文件数</th><th>操作</th></tr>

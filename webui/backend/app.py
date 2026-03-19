@@ -546,6 +546,10 @@ def _resolve_output_file(output_file: Optional[str]) -> str:
     return os.path.join(core._OUTPUT_DIR, target)
 
 
+def _accounts_file_path() -> str:
+    return _resolve_output_file("registered_accounts.txt")
+
+
 def _parse_account_line(line: str):
     raw = line.strip()
     if not raw:

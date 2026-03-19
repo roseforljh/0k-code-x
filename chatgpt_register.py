@@ -49,7 +49,7 @@ def _load_config():
                 file_config = json.load(f)
                 config.update(file_config)
         except Exception as e:
-            print(f"⚠️ 加载 config.json 失败: {e}")
+            print(f"[WARN] 加载 config.json 失败: {e}")
 
     # 环境变量优先级更高
     config["email_backend"] = os.environ.get("EMAIL_BACKEND", config["email_backend"])
@@ -102,7 +102,7 @@ RK_FILE = os.path.join(_OUTPUT_DIR, "rk.txt")
 
 # 邮箱后端配置检查
 if not (CFEMAIL_URL and CFEMAIL_PASSWORD):
-    print("⚠️ 警告: CFEmail 后端未配置 cfemail_url 或 cfemail_password")
+    print("[WARN] 警告: CFEmail 后端未配置 cfemail_url 或 cfemail_password")
 
 # 全局线程锁
 _print_lock = threading.Lock()
@@ -1810,7 +1810,7 @@ def run_batch(total_accounts: int = 3, output_file=None,
         output_file = os.path.join(_OUTPUT_DIR, output_file)
 
     if not (CFEMAIL_URL and CFEMAIL_PASSWORD):
-        print("❌ 错误: CFEmail 配置不完整")
+        print("[ERROR] 错误: CFEmail 配置不完整")
         print("   请在 config.json 中设置 cfemail_url 和 cfemail_password")
         return
 
@@ -1871,7 +1871,7 @@ def main():
     print("=" * 60)
 
     if not (CFEMAIL_URL and CFEMAIL_PASSWORD):
-        print("\n⚠️  警告: CFEmail 配置不完整")
+        print("\n[WARN] 警告: CFEmail 配置不完整")
         print("   请在 config.json 中设置 cfemail_url 和 cfemail_password")
         print("\n   按 Enter 继续尝试运行 (可能会失败)...")
         input()
