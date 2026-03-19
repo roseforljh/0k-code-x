@@ -12,6 +12,6 @@ ENV VITE_API_BASE=${VITE_API_BASE}
 
 RUN npm run build
 
-FROM scratch AS export
+FROM alpine AS export
 
 COPY --from=build /app/dist /dist

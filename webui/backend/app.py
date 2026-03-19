@@ -60,13 +60,13 @@ class DetectSettingsRequest(BaseModel):
 
 
 class CodexProxyCheckRequest(BaseModel):
-    api_base_url: str = Field(min_length=1)
-    api_key: str = Field(min_length=1)
+    api_base_url: Optional[str] = ""
+    api_key: Optional[str] = ""
 
 
 class PushCodexTokenSingleRequest(BaseModel):
-    api_base_url: str = Field(min_length=1)
-    api_key: str = Field(min_length=1)
+    api_base_url: Optional[str] = ""
+    api_key: Optional[str] = ""
     filename: str = Field(min_length=1)
     delete_local_after_upload: bool = True
 
@@ -140,23 +140,19 @@ def _read_required_env(name: str) -> str:
     return value
 
 
+def _normalize_base_url(v: Optional[str]) -> str:
+    s = (v or "").strip()
+    return s[:-1] if s.endswith("/") else s
+
+
 def _load_detect_settings_from_env() -> dict:
     return {
-        "detect_base_url": _normalize_base_url(_read_required_env("REMOTE_API_BASE_URL")),
-        "detect_api_key": _read_required_env("REMOTE_API_KEY"),
+        "detect_base_url": _normalize_base_url(os.environ.get("REMOTE_API_BASE_URL")),
+        "detect_api_key": (os.environ.get("REMOTE_API_KEY") or "").strip(),
     }
 
 
 _detect_settings = _load_detect_settings_from_env()
-
-
-def _accounts_file_path() -> str:
-    return os.path.join(core._OUTPUT_DIR, "registered_accounts.txt")
-
-
-def _normalize_base_url(v: Optional[str]) -> str:
-    s = (v or "").strip()
-    return s[:-1] if s.endswith("/") else s
 
 
 def _join_base_url(base: str, path: str) -> str:
@@ -292,6 +288,14 @@ def _read_env_bool(name: str, default: bool = False) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "y", "on"}
+
+
+def _get_cliproxy_management_settings(override_base_url: Optional[str] = None, override_api_key: Optional[str] = None) -> tuple[str, str]:
+    env_base = _normalize_base_url(os.environ.get("CLIPROXY_API_BASE_URL") or "")
+    env_key = (os.environ.get("CLIPROXY_API_KEY") or "").strip()
+    base_url = _normalize_base_url((override_base_url or "").strip()) or env_base
+    api_key = (override_api_key or "").strip() or env_key
+    return base_url, api_key
 
 
 def _load_auto_maintain_settings() -> dict:
@@ -1416,11 +1420,6 @@ def get_auto_maintain_status():
         }
 
 
-FRONTEND_DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
-if os.path.isdir(FRONTEND_DIST_DIR):
-    app.mount("/", StaticFiles(directory=FRONTEND_DIST_DIR, html=True), name="frontend")
-
-
 @app.get("/api/settings/detect")
 def get_detect_settings():
     settings = _get_detect_settings()
@@ -1710,12 +1709,11 @@ def check_all_account_tokens():
 
 @app.post("/api/codex-push/check")
 def check_codex_push_target(req: CodexProxyCheckRequest):
-    base_url = _normalize_base_url(req.api_base_url)
-    api_key = (req.api_key or "").strip()
+    base_url, api_key = _get_cliproxy_management_settings(req.api_base_url, req.api_key)
     if not base_url:
-        raise HTTPException(status_code=400, detail="api_base_url required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_BASE_URL")
     if not api_key:
-        raise HTTPException(status_code=400, detail="api_key required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_KEY")
 
     local_files = _list_local_codex_token_files()
     local_names = {x.get("name") for x in local_files if x.get("name")}
@@ -1769,13 +1767,12 @@ def check_codex_push_target(req: CodexProxyCheckRequest):
 
 @app.post("/api/codex-push/single")
 def push_single_codex_token(req: PushCodexTokenSingleRequest):
-    base_url = _normalize_base_url(req.api_base_url)
-    api_key = (req.api_key or "").strip()
+    base_url, api_key = _get_cliproxy_management_settings(req.api_base_url, req.api_key)
     filename = os.path.basename(req.filename or "")
     if not base_url:
-        raise HTTPException(status_code=400, detail="api_base_url required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_BASE_URL")
     if not api_key:
-        raise HTTPException(status_code=400, detail="api_key required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_KEY")
     if not filename or filename != req.filename:
         raise HTTPException(status_code=400, detail="invalid filename")
 
@@ -1820,23 +1817,23 @@ class RemoteFileCheckResult(BaseModel):
     message: str
 
 class CheckRemoteStatusRequest(BaseModel):
-    api_base_url: str
-    api_key: str
+    api_base_url: Optional[str] = ""
+    api_key: Optional[str] = ""
 
 class CheckRemoteStatusSingleRequest(BaseModel):
-    api_base_url: str
-    api_key: str
+    api_base_url: Optional[str] = ""
+    api_key: Optional[str] = ""
     filename: str
 
 class CheckRemoteStatusBatchRequest(BaseModel):
-    api_base_url: str
-    api_key: str
+    api_base_url: Optional[str] = ""
+    api_key: Optional[str] = ""
     filenames: List[str] = Field(default_factory=list)
     max_workers: int = Field(default=16, ge=1, le=64)
 
 class DeleteRemoteFilesRequest(BaseModel):
-    api_base_url: str
-    api_key: str
+    api_base_url: Optional[str] = ""
+    api_key: Optional[str] = ""
     filenames: List[str]
 
 
@@ -1920,12 +1917,11 @@ def _check_one_remote_codex_file(base_url: str, api_key: str, name: str, item_hi
 
 @app.post("/api/codex-push/check-remote-status")
 def check_remote_status(req: CheckRemoteStatusRequest):
-    base_url = _normalize_base_url(req.api_base_url)
-    api_key = (req.api_key or "").strip()
+    base_url, api_key = _get_cliproxy_management_settings(req.api_base_url, req.api_key)
     if not base_url:
-        raise HTTPException(status_code=400, detail="api_base_url required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_BASE_URL")
     if not api_key:
-        raise HTTPException(status_code=400, detail="api_key required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_KEY")
 
     try:
         remote_files = _get_remote_auth_files(base_url, api_key)
@@ -1980,13 +1976,12 @@ def check_remote_status(req: CheckRemoteStatusRequest):
 
 @app.post("/api/codex-push/check-remote-status-single")
 def check_remote_status_single(req: CheckRemoteStatusSingleRequest):
-    base_url = _normalize_base_url(req.api_base_url)
-    api_key = (req.api_key or "").strip()
+    base_url, api_key = _get_cliproxy_management_settings(req.api_base_url, req.api_key)
     filename = os.path.basename(req.filename or "")
     if not base_url:
-        raise HTTPException(status_code=400, detail="api_base_url required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_BASE_URL")
     if not api_key:
-        raise HTTPException(status_code=400, detail="api_key required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_KEY")
     if not filename or filename != req.filename:
         raise HTTPException(status_code=400, detail="invalid filename")
 
@@ -1996,12 +1991,11 @@ def check_remote_status_single(req: CheckRemoteStatusSingleRequest):
 
 @app.post("/api/codex-push/check-remote-status-batch")
 def check_remote_status_batch(req: CheckRemoteStatusBatchRequest):
-    base_url = _normalize_base_url(req.api_base_url)
-    api_key = (req.api_key or "").strip()
+    base_url, api_key = _get_cliproxy_management_settings(req.api_base_url, req.api_key)
     if not base_url:
-        raise HTTPException(status_code=400, detail="api_base_url required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_BASE_URL")
     if not api_key:
-        raise HTTPException(status_code=400, detail="api_key required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_KEY")
 
     safe_names: List[str] = []
     for n in req.filenames or []:
@@ -2037,10 +2031,9 @@ def check_remote_status_batch(req: CheckRemoteStatusBatchRequest):
     return {"ok": True, "results": results}
 @app.post("/api/codex-push/delete-remote-files")
 def delete_remote_files(req: DeleteRemoteFilesRequest):
-    base_url = _normalize_base_url(req.api_base_url)
-    api_key = (req.api_key or "").strip()
+    base_url, api_key = _get_cliproxy_management_settings(req.api_base_url, req.api_key)
     if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="api_base_url and api_key required")
+        raise HTTPException(status_code=400, detail="missing CLIPROXY_API_BASE_URL or CLIPROXY_API_KEY")
     if not req.filenames:
         return {"ok": True, "deleted": [], "failed": []}
 
@@ -2145,7 +2138,8 @@ async def ws_logs(websocket: WebSocket, task_id: str):
         return
 
 
-
-
+FRONTEND_DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+if os.path.isdir(FRONTEND_DIST_DIR):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST_DIR, html=True), name="frontend")
 
 

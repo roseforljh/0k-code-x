@@ -1,7 +1,8 @@
 ﻿<script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
+const RAW_API_BASE = import.meta.env.VITE_API_BASE || ''
+const API_BASE = RAW_API_BASE.endsWith('/api') ? RAW_API_BASE.slice(0, -4) : (RAW_API_BASE || 'http://127.0.0.1:8000')
 
 const page = ref('dashboard')
 
@@ -247,8 +248,6 @@ async function checkCodexPushTarget() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        api_base_url: codexPushForm.api_base_url,
-        api_key: codexPushForm.api_key,
       }),
     })
     const data = await res.json().catch(() => ({}))
@@ -302,8 +301,6 @@ async function pushCodexTokensToProxy() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          api_base_url: codexPushForm.api_base_url,
-          api_key: codexPushForm.api_key,
           filename: name,
           delete_local_after_upload: !!codexPushForm.delete_local_after_upload,
         }),
@@ -344,8 +341,6 @@ async function checkRemoteStatus() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        api_base_url: codexPushForm.api_base_url,
-        api_key: codexPushForm.api_key,
       }),
     })
     const precheckData = await precheckRes.json().catch(() => ({}))
@@ -381,8 +376,6 @@ async function checkRemoteStatus() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              api_base_url: codexPushForm.api_base_url,
-              api_key: codexPushForm.api_key,
               filenames: chunk.names,
               max_workers: 16,
             }),
@@ -440,8 +433,6 @@ async function deleteInvalidRemoteFiles() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        api_base_url: codexPushForm.api_base_url,
-        api_key: codexPushForm.api_key,
         filenames: invalidFiles
       }),
     })
@@ -1314,18 +1305,10 @@ onUnmounted(() => {
           <section class="card settings-card">
             <h2>检测与配额接口设置</h2>
             <p class="empty" style="text-align: left; margin-bottom: 16px;">
-              当前环境的远端检测地址和密钥由容器环境变量 `REMOTE_API_BASE_URL` 与 `REMOTE_API_KEY` 提供，页面内不再支持修改。
+              推送与远程状态检查将直接使用容器环境变量 `CLIPROXY_API_BASE_URL` 与 `CLIPROXY_API_KEY`。
             </p>
 
             <h3 style="margin-top: 16px;">推送 Codex 认证到 CLIProxyAPI</h3>
-            <div class="form-row">
-              <label>CLIProxyAPI 管理地址</label>
-              <input v-model="codexPushForm.api_base_url" placeholder="http://127.0.0.1:8080" />
-            </div>
-            <div class="form-row">
-              <label>CLIProxyAPI 管理密钥</label>
-              <input v-model="codexPushForm.api_key" placeholder="请输入 Management Key" />
-            </div>
             <div class="actions">
               <button class="btn" :disabled="checkingCodexTarget || pushingCodexTokens" @click="checkCodexPushTarget">{{ checkingCodexTarget ? '预检中...' : '先预检并加载 token 列表' }}</button>
             </div>
