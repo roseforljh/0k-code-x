@@ -5,6 +5,11 @@ const RAW_API_BASE = import.meta.env.VITE_API_BASE || ''
 const API_BASE = RAW_API_BASE.endsWith('/api') ? RAW_API_BASE.slice(0, -4) : (RAW_API_BASE || 'http://127.0.0.1:8000')
 
 const page = ref('dashboard')
+const authChecked = ref(false)
+const authenticated = ref(false)
+const authLoading = ref(false)
+const authError = ref('')
+const authForm = reactive({ username: 'kziii71', password: '' })
 
 const form = reactive({
   total_accounts: 3,
@@ -146,15 +151,61 @@ const activityItems = computed(() => {
     })
 })
 
+async function checkSession() {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/session`, { credentials: 'include' })
+    const data = await res.json().catch(() => ({}))
+    authenticated.value = !!data?.authenticated
+  } catch (e) {
+    authenticated.value = false
+  } finally {
+    authChecked.value = true
+  }
+}
+
+async function login() {
+  authLoading.value = true
+  authError.value = ''
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(authForm),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data?.detail || '登录失败')
+    authenticated.value = true
+    showNotice('登录成功', 'success')
+    await fetchTasks().catch(() => {})
+    await fetchAutoMaintain().catch(() => {})
+    if (page.value === 'accounts') await fetchAccounts().catch(() => {})
+  } catch (e) {
+    authError.value = e.message || '登录失败'
+  } finally {
+    authLoading.value = false
+    authChecked.value = true
+  }
+}
+
+async function logout() {
+  try {
+    await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' })
+  } catch (e) {}
+  authenticated.value = false
+  authForm.password = ''
+}
+
 async function fetchTasks() {
-  const res = await fetch(`${API_BASE}/api/tasks`)
+  const res = await fetch(`${API_BASE}/api/tasks`, {
+      credentials: 'include', credentials: 'include' })
   if (!res.ok) throw new Error('加载历史任务失败')
   tasks.value = await res.json()
 }
 
 async function fetchAccounts() {
   const prevEmail = selectedAccount.value?.email || ''
-  const res = await fetch(`${API_BASE}/api/accounts`)
+  const res = await fetch(`${API_BASE}/api/accounts`, { credentials: 'include' })
   if (!res.ok) throw new Error('加载账号失败')
   const data = await res.json()
   accounts.value = Array.isArray(data?.accounts) ? data.accounts : []
@@ -169,7 +220,7 @@ async function fetchAccounts() {
 }
 
 async function fetchAutoMaintainStatus() {
-  const res = await fetch(`${API_BASE}/api/auto-maintain`)
+  const res = await fetch(`${API_BASE}/api/auto-maintain`, { credentials: 'include' })
   if (!res.ok) throw new Error('加载自动维护状态失败')
   const data = await res.json()
   autoMaintain.enabled = !!data?.enabled
@@ -245,6 +296,7 @@ async function checkCodexPushTarget() {
   settingsError.value = ''
   try {
     const res = await fetch(`${API_BASE}/api/codex-push/check`, {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -298,6 +350,7 @@ async function pushCodexTokensToProxy() {
   try {
     for (const name of targets) {
       const res = await fetch(`${API_BASE}/api/codex-push/single`, {
+        credentials: 'include',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -338,6 +391,7 @@ async function checkRemoteStatus() {
 
   try {
     const precheckRes = await fetch(`${API_BASE}/api/codex-push/check`, {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -373,6 +427,7 @@ async function checkRemoteStatus() {
         const chunk = chunks[currentChunk]
         try {
           const res = await fetch(`${API_BASE}/api/codex-push/check-remote-status-batch`, {
+              credentials: 'include',
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -430,6 +485,7 @@ async function deleteInvalidRemoteFiles() {
   
   try {
     const res = await fetch(`${API_BASE}/api/codex-push/delete-remote-files`, {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -534,7 +590,7 @@ function startTaskPolling(taskId) {
   stopTaskPolling()
   taskPollTimer = setInterval(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/tasks/${taskId}`)
+      const res = await fetch(`${API_BASE}/api/tasks/${taskId}`, { credentials: 'include' })
       if (!res.ok) return
       const data = await res.json()
       applyTaskSnapshot(data)
@@ -585,6 +641,7 @@ async function startTask() {
   stopTaskPolling()
   try {
     const res = await fetch(`${API_BASE}/api/tasks`, {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -619,7 +676,7 @@ async function stopTask() {
   activeStatus.value = 'stopping'
   appendLog('[UI] 正在发送停止请求...')
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/${activeTaskId.value}/stop`, { method: 'POST' })
+    const res = await fetch(`${API_BASE}/api/tasks/${activeTaskId.value}/stop`, { method: 'POST', credentials: 'include' })
     if (!res.ok) throw new Error('停止任务失败')
     const data = await res.json()
     activeStatus.value = data.status
@@ -633,7 +690,7 @@ async function stopTask() {
 async function inspectTask(taskId) {
   errorMsg.value = ''
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/${taskId}`)
+    const res = await fetch(`${API_BASE}/api/tasks/${taskId}`, { credentials: 'include' })
     if (!res.ok) throw new Error('加载任务详情失败')
     const data = await res.json()
     activeTaskId.value = data.task_id
@@ -675,7 +732,7 @@ async function openToken(tokenName) {
   tokenLoading.value = true
   accountError.value = ''
   try {
-    const res = await fetch(`${API_BASE}/api/tokens/${encodeURIComponent(tokenName)}`)
+    const res = await fetch(`${API_BASE}/api/tokens/${encodeURIComponent(tokenName)}`, { credentials: 'include' })
     if (!res.ok) throw new Error('加载 token 文件失败')
     selectedToken.value = await res.json()
   } catch (e) {
@@ -719,7 +776,7 @@ async function checkTokenFileStatus(tokenName) {
   checkingTokenFiles.value[tokenName] = true
   accountError.value = ''
   try {
-    const res = await fetch(`${API_BASE}/api/tokens/${encodeURIComponent(tokenName)}/check`, { method: 'POST' })
+    const res = await fetch(`${API_BASE}/api/tokens/${encodeURIComponent(tokenName)}/check`, { method: 'POST', credentials: 'include' })
     if (!res.ok) throw new Error('检测 token 文件状态失败')
     const tokenStatus = await res.json()
     applyTokenFileStatus(tokenName, tokenStatus)
@@ -762,7 +819,7 @@ async function checkAllTokenStatus() {
 
   async function runOne(email) {
     try {
-      const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(email)}/check`, { method: 'POST' })
+      const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(email)}/check`, { method: 'POST', credentials: 'include' })
       if (!res.ok) throw new Error('账号检测失败')
       const data = await res.json()
       applyAccountStatus(email, data?.token_status || {})
@@ -810,7 +867,7 @@ async function checkAccountStatus(email) {
   checkingAccounts.value[email] = true
   accountError.value = ''
   try {
-    const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(email)}/check`, { method: 'POST' })
+    const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(email)}/check`, { method: 'POST', credentials: 'include' })
     if (!res.ok) throw new Error('账号检测失败')
     const data = await res.json()
     applyAccountStatus(email, data?.token_status || {})
@@ -832,7 +889,7 @@ async function removeAccount(email) {
   if (!window.confirm(`确认删除账号 ${email} ?`)) return
   accountError.value = ''
   try {
-    const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(email)}`, { method: 'DELETE' })
+    const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(email)}`, { method: 'DELETE', credentials: 'include' })
     if (!res.ok) {
       let detail = '删除失败'
       try {
@@ -879,6 +936,7 @@ async function batchDeleteSelected() {
   accountError.value = ''
   try {
     const res = await fetch(`${API_BASE}/api/accounts/batch-delete`, {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ emails: selectedEmails.value }),
@@ -904,7 +962,7 @@ async function clearAllAccounts() {
   if (!window.confirm('确认清空所有账号？此操作不可撤销。')) return
   accountError.value = ''
   try {
-    const res = await fetch(`${API_BASE}/api/accounts`, { method: 'DELETE' })
+    const res = await fetch(`${API_BASE}/api/accounts`, { method: 'DELETE', credentials: 'include' })
     if (!res.ok) {
       let detail = '清空失败'
       try {
@@ -926,7 +984,7 @@ async function clearAbnormalAccounts() {
   if (!window.confirm('确认一键删除所有异常账号（已过期/无效/缺失）?')) return
   accountError.value = ''
   try {
-    const res = await fetch(`${API_BASE}/api/accounts/clear-abnormal`, { method: 'POST' })
+    const res = await fetch(`${API_BASE}/api/accounts/clear-abnormal`, { method: 'POST', credentials: 'include' })
     if (!res.ok) {
       let detail = '删除异常账号失败'
       try {
@@ -953,6 +1011,7 @@ async function exportAccountsTxt() {
   try {
     const n = Math.max(1, Number(exportCount.value || 1))
     const res = await fetch(`${API_BASE}/api/accounts/export`, {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ count: n }),

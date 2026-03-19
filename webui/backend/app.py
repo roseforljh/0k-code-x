@@ -15,9 +15,10 @@ from dataclasses import dataclass, field
 from queue import Queue, Empty
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -57,6 +58,11 @@ class ExportAccountsRequest(BaseModel):
 class DetectSettingsRequest(BaseModel):
     detect_base_url: Optional[str] = ""
     detect_api_key: Optional[str] = ""
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
 
 
 class CodexProxyCheckRequest(BaseModel):
@@ -107,6 +113,20 @@ class TaskState:
 
 
 app = FastAPI(title="ChatGPT Register WebUI API")
+
+AUTH_COOKIE_NAME = "okx_session"
+
+def _get_panel_auth_settings() -> tuple[str, str]:
+    username = (os.environ.get("PANEL_LOGIN_USERNAME") or "admin").strip()
+    password = (os.environ.get("PANEL_LOGIN_PASSWORD") or "CHANGE_ME").strip()
+    return username, password
+
+def _is_authenticated(request: Request) -> bool:
+    cookie = (request.cookies.get(AUTH_COOKIE_NAME) or "").strip()
+    user, pwd = _get_panel_auth_settings()
+    expected = f"{user}:{pwd}"
+    return cookie == expected
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -114,6 +134,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def panel_auth_middleware(request: Request, call_next):
+    path = request.url.path or "/"
+    if path.startswith("/assets/") or path in {"/favicon.ico", "/api/health", "/api/auth/login", "/api/auth/session", "/api/auth/logout"}:
+        return await call_next(request)
+    if path.startswith("/api/") and not _is_authenticated(request):
+        return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 @app.on_event("startup")
@@ -1400,6 +1429,29 @@ def _run_task(task: TaskState):
             task,
             f"[TASK] end status={task.status} success={task.success_count} fail={task.fail_count} done={task.completed_count}/{task.total_accounts}",
         )
+
+
+@app.get("/api/auth/session")
+def auth_session(request: Request):
+    user, _pwd = _get_panel_auth_settings()
+    return {"ok": True, "authenticated": _is_authenticated(request), "username": user if _is_authenticated(request) else ""}
+
+
+@app.post("/api/auth/login")
+def auth_login(req: LoginRequest):
+    user, pwd = _get_panel_auth_settings()
+    if req.username.strip() != user or req.password != pwd:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    resp = JSONResponse({"ok": True, "username": user})
+    resp.set_cookie(AUTH_COOKIE_NAME, f"{user}:{pwd}", httponly=True, samesite="Lax", secure=False, max_age=86400*30, path="/")
+    return resp
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(AUTH_COOKIE_NAME, path="/")
+    return resp
 
 
 @app.get("/api/health")
