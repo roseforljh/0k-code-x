@@ -82,7 +82,7 @@ class AutoMaintainState:
     enabled: bool = False
     running: bool = False
     interval_seconds: int = 1800
-    target_count: int = 50
+    target_count: int = 100
     max_workers: int = 3
     remote_valid_count: int = 0
     last_started_at: Optional[float] = None
@@ -331,7 +331,7 @@ def _load_auto_maintain_settings() -> dict:
     return {
         "enabled": _read_env_bool("AUTO_MAINTAIN_ENABLED", True),
         "interval_seconds": _read_env_int("AUTO_MAINTAIN_INTERVAL_SECONDS", 1800),
-        "target_count": _read_env_int("AUTO_MAINTAIN_TARGET_COUNT", 50),
+        "target_count": _read_env_int("AUTO_MAINTAIN_TARGET_COUNT", 100),
         "max_workers": _read_env_int("AUTO_MAINTAIN_MAX_WORKERS", 3),
         "api_base_url": _normalize_base_url(os.environ.get("CLIPROXY_API_BASE_URL") or ""),
         "api_key": (os.environ.get("CLIPROXY_API_KEY") or "").strip(),
@@ -505,7 +505,7 @@ def _perform_auto_maintain_once():
         _auto_log(f"[auto] deleted invalid remote codex files: {len(deleted)}")
 
     status_rows = _collect_remote_codex_status(base_url, api_key)
-    remote_valid_count = sum(1 for x in status_rows if int(x.get("status_code") or 0) == 200)
+    remote_valid_count = sum(1 for x in status_rows if int(x.get("status_code") or 0) == 200 and not x.get("is_invalid"))
 
     while remote_valid_count < int(settings["target_count"]):
         missing = int(settings["target_count"]) - remote_valid_count
@@ -537,7 +537,7 @@ def _perform_auto_maintain_once():
                 _auto_log(f"[auto] push failed for {name}: {ex}")
 
         status_rows = _collect_remote_codex_status(base_url, api_key)
-        remote_valid_count = sum(1 for x in status_rows if int(x.get("status_code") or 0) == 200)
+        remote_valid_count = sum(1 for x in status_rows if int(x.get("status_code") or 0) == 200 and not x.get("is_invalid"))
 
     with _auto_maintain_lock:
         _auto_maintain_state.remote_valid_count = remote_valid_count
@@ -1980,8 +1980,14 @@ def _check_one_remote_codex_file(base_url: str, api_key: str, name: str, item_hi
 
         quota = _strict_get_codex_quota(token_payload)
         if quota.get("ok"):
+            weekly = ((quota.get("weekly") or {}) if isinstance(quota, dict) else {})
+            remaining = weekly.get("remaining_percent")
             status_code = quota.get("http_status")
-            message = "quota ok"
+            if remaining is not None and float(remaining) <= 0:
+                is_invalid = True
+                message = "quota exhausted (remaining=0)"
+            else:
+                message = "quota ok"
         else:
             quota_http = quota.get("http_status")
             quota_code = str(quota.get("error_code") or "")
