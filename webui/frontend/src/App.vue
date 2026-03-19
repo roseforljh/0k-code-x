@@ -138,8 +138,8 @@ const activityItems = computed(() => {
       const account = m ? m[1] : 'SYS'
       const low = line.toLowerCase()
       let state = 'running'
-      if (low.includes('success') || low.includes('娉ㄥ唽鎴愬姛')) state = 'success'
-      else if (low.includes('failed') || low.includes('exception') || low.includes('澶辫触')) state = 'failed'
+      if (low.includes('success') || low.includes('注册成功')) state = 'success'
+      else if (low.includes('failed') || low.includes('exception') || low.includes('失败')) state = 'failed'
       else if (low.includes('started') || low.includes('worker_boot')) state = 'started'
       return { key: `${i}-${line}`, account, state, text: line }
     })
@@ -147,14 +147,14 @@ const activityItems = computed(() => {
 
 async function fetchTasks() {
   const res = await fetch(`${API_BASE}/api/tasks`)
-  if (!res.ok) throw new Error('鍔犺浇鍘嗗彶浠诲姟澶辫触')
+  if (!res.ok) throw new Error('加载历史任务失败')
   tasks.value = await res.json()
 }
 
 async function fetchAccounts() {
   const prevEmail = selectedAccount.value?.email || ''
   const res = await fetch(`${API_BASE}/api/accounts`)
-  if (!res.ok) throw new Error('鍔犺浇璐﹀彿澶辫触')
+  if (!res.ok) throw new Error('加载账号失败')
   const data = await res.json()
   accounts.value = Array.isArray(data?.accounts) ? data.accounts : []
   accountSummary.total_accounts = Number(data?.summary?.total_accounts || 0)
@@ -252,7 +252,7 @@ async function checkCodexPushTarget() {
       }),
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data?.detail || '棰勬澶辫触')
+    if (!res.ok) throw new Error(data?.detail || '预检失败')
 
     localCodexFiles.value = Array.isArray(data?.local_files) ? data.local_files : []
     remoteCodexSummary.remote_codex_total = Number(data?.remote_codex_total || 0)
@@ -269,8 +269,8 @@ async function checkCodexPushTarget() {
   } catch (e) {
     localCodexFiles.value = []
     selectedCodexFiles.value = []
-    settingsError.value = e.message || '棰勬澶辫触'
-    showNotice('绠＄悊棰勬澶辫触锛屽凡缁堟涓婁紶', 'error')
+    settingsError.value = e.message || '预检失败'
+    showNotice('管理预检失败，已终止上传', 'error')
   } finally {
     checkingCodexTarget.value = false
   }
@@ -278,14 +278,14 @@ async function checkCodexPushTarget() {
 
 async function pushCodexTokensToProxy() {
   if (!localCodexFiles.value.length) {
-    settingsError.value = '璇峰厛鎵ц棰勬骞跺姞杞芥湰鍦?codex tokens'
+    settingsError.value = '请先执行预检并加载本地 codex tokens'
     return
   }
   const targets = localCodexFiles.value
     .filter((x) => selectedCodexFiles.value.includes(x.name))
     .map((x) => x.name)
   if (!targets.length) {
-    settingsError.value = '璇疯嚦灏戦€夋嫨涓€涓?token 鏂囦欢'
+    settingsError.value = '请至少选择一个 token 文件'
     return
   }
 
@@ -315,12 +315,12 @@ async function pushCodexTokensToProxy() {
     }
 
     const type = codexPushProgress.failed > 0 ? 'error' : 'success'
-    showNotice(`鎺ㄩ€佸畬鎴?${codexPushProgress.done}/${codexPushProgress.total}锛屾垚鍔?${codexPushProgress.success}锛屽け璐?${codexPushProgress.failed}`, type)
+    showNotice(`推送完成 ${codexPushProgress.done}/${codexPushProgress.total}，成功 ${codexPushProgress.success}，失败 ${codexPushProgress.failed}`, type)
     await checkCodexPushTarget()
     if (page.value === 'accounts') await fetchAccounts().catch(() => {})
   } catch (e) {
     settingsError.value = e.message || '推送失败'
-    showNotice('鎺ㄩ€?Codex 璁よ瘉鏂囦欢澶辫触', 'error')
+    showNotice('推送 Codex 认证文件失败', 'error')
   } finally {
     pushingCodexTokens.value = false
   }
@@ -446,19 +446,19 @@ async function deleteInvalidRemoteFiles() {
       }),
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data?.detail || '鍒犻櫎澶辫触')
+    if (!res.ok) throw new Error(data?.detail || '删除失败')
     
     showNotice(`删除完成：成功 ${data.deleted?.length || 0} 个，失败 ${data.failed?.length || 0} 个`, 'success')
     if (data.failed && data.failed.length > 0) {
-      settingsError.value = `鏈?${data.failed.length} 涓枃浠跺垹闄ゅけ璐? ${data.failed[0].error}`
+      settingsError.value = `有 ${data.failed.length} 个文件删除失败: ${data.failed[0].error}`
     }
     
     // Clear list and refresh counts
     remoteCheckResults.value = []
     await checkCodexPushTarget()
   } catch (e) {
-    settingsError.value = e.message || '鍒犻櫎杩滅鏂囦欢澶辫触'
-    showNotice('鍒犻櫎杩滅鏂囦欢澶辫触', 'error')
+    settingsError.value = e.message || '删除远端文件失败'
+    showNotice('删除远端文件失败', 'error')
   } finally {
     deletingRemoteFiles.value = false
   }
@@ -466,12 +466,12 @@ async function deleteInvalidRemoteFiles() {
 
 function tokenStatusLabel(status) {
   const s = String(status || 'unknown').toLowerCase()
-  if (s === 'active') return '姝ｅ父'
-  if (s === 'expiring') return '鍗冲皢杩囨湡'
+  if (s === 'active') return '正常'
+  if (s === 'expiring') return '即将过期'
   if (s === 'expired') return '已过期'
-  if (s === 'missing') return '缂哄け'
-  if (s === 'invalid') return '鏃犳晥'
-  return '鏈煡'
+  if (s === 'missing') return '缺失'
+  if (s === 'invalid') return '无效'
+  return '未知'
 }
 
 function tokenStatusClass(status) {
@@ -504,9 +504,9 @@ function quotaResetLabel(v) {
   const d = Math.floor(sec / 86400)
   const h = Math.floor((sec % 86400) / 3600)
   const m = Math.floor((sec % 3600) / 60)
-  if (d > 0) return `${d}澶?{h}灏忔椂`
-  if (h > 0) return `${h}灏忔椂${m}鍒嗛挓`
-  return `${m}鍒嗛挓`
+  if (d > 0) return `${d}天${h}小时`
+  if (h > 0) return `${h}小时${m}分钟`
+  return `${m}分钟`
 }
 
 function quotaBarClass(percent) {
@@ -549,7 +549,7 @@ function startTaskPolling(taskId) {
       applyTaskSnapshot(data)
       if (['completed', 'failed', 'stopped'].includes(data.status)) {
         stopTaskPolling()
-        const text = `娉ㄥ唽瀹屾垚锛氭垚鍔?${data.success_count || 0}锛屽け璐?${data.fail_count || 0}`
+        const text = `注册完成：成功 ${data.success_count || 0}，失败 ${data.fail_count || 0}`
         showNotice(text, (data.fail_count || 0) > 0 ? 'error' : 'success')
         fetchTasks().catch(() => {})
         fetchAccounts().catch(() => {})
@@ -603,7 +603,7 @@ async function startTask() {
         output_file: form.output_file || 'registered_accounts.txt',
       }),
     })
-    if (!res.ok) throw new Error(`鍚姩澶辫触: ${res.status}`)
+    if (!res.ok) throw new Error(`启动失败: ${res.status}`)
     const data = await res.json()
     activeTaskId.value = data.task_id
     activeStatus.value = data.status
@@ -612,7 +612,7 @@ async function startTask() {
     currentStats.fail = 0
     currentStats.done = 0
     currentStats.total = Number(form.total_accounts)
-    appendLog(`[UI] 浠诲姟宸插惎鍔? ${data.task_id}`)
+    appendLog(`[UI] 任务已启动 ${data.task_id}`)
     connectWs(data.task_id)
     await fetchTasks()
   } catch (e) {
@@ -626,16 +626,16 @@ async function stopTask() {
   if (!activeTaskId.value) return
   errorMsg.value = ''
   activeStatus.value = 'stopping'
-  appendLog('[UI] 姝ｅ湪鍙戦€佸仠姝㈣姹?..')
+  appendLog('[UI] 正在发送停止请求...')
   try {
     const res = await fetch(`${API_BASE}/api/tasks/${activeTaskId.value}/stop`, { method: 'POST' })
-    if (!res.ok) throw new Error('鍋滄浠诲姟澶辫触')
+    if (!res.ok) throw new Error('停止任务失败')
     const data = await res.json()
     activeStatus.value = data.status
-    appendLog(`[UI] 鍋滄璇锋眰宸插彂閫? ${data.status}`)
+    appendLog(`[UI] 停止请求已发送 ${data.status}`)
   } catch (e) {
     errorMsg.value = e.message
-    appendLog(`[UI] 鍋滄璇锋眰澶辫触: ${e.message}`)
+    appendLog(`[UI] 停止请求失败: ${e.message}`)
   }
 }
 
@@ -643,7 +643,7 @@ async function inspectTask(taskId) {
   errorMsg.value = ''
   try {
     const res = await fetch(`${API_BASE}/api/tasks/${taskId}`)
-    if (!res.ok) throw new Error('鍔犺浇浠诲姟璇︽儏澶辫触')
+    if (!res.ok) throw new Error('加载任务详情失败')
     const data = await res.json()
     activeTaskId.value = data.task_id
     logs.value = []
@@ -685,7 +685,7 @@ async function openToken(tokenName) {
   accountError.value = ''
   try {
     const res = await fetch(`${API_BASE}/api/tokens/${encodeURIComponent(tokenName)}`)
-    if (!res.ok) throw new Error('鍔犺浇 token 鏂囦欢澶辫触')
+    if (!res.ok) throw new Error('加载 token 文件失败')
     selectedToken.value = await res.json()
   } catch (e) {
     accountError.value = e.message
@@ -732,10 +732,10 @@ async function checkTokenFileStatus(tokenName) {
     if (!res.ok) throw new Error('检测 token 文件状态失败')
     const tokenStatus = await res.json()
     applyTokenFileStatus(tokenName, tokenStatus)
-    showNotice(`妫€娴嬪畬鎴? ${tokenName}`, 'success')
+    showNotice(`检测完成 ${tokenName}`, 'success')
   } catch (e) {
     accountError.value = e.message
-    showNotice(`妫€娴嬪け璐? ${tokenName}`, 'error')
+    showNotice(`检测失败 ${tokenName}`, 'error')
   } finally {
     checkingTokenFiles.value[tokenName] = false
   }
@@ -749,7 +749,7 @@ async function refreshAccountsList() {
     showNotice('账号列表已刷新', 'success')
   } catch (e) {
     accountError.value = e.message
-    showNotice('鍒锋柊璐﹀彿鍒楄〃澶辫触', 'error')
+    showNotice('刷新账号列表失败', 'error')
   } finally {
     accountRefreshing.value = false
   }
@@ -828,22 +828,22 @@ async function checkAccountStatus(email) {
     accountSummary.total_accounts = accounts.value.length
     accountSummary.normal_accounts = normal
     accountSummary.abnormal_accounts = abnormal
-    showNotice(`璐﹀彿妫€娴嬪畬鎴? ${email}`, 'success')
+    showNotice(`账号检测完成 ${email}`, 'success')
   } catch (e) {
     accountError.value = e.message
-    showNotice(`璐﹀彿妫€娴嬪け璐? ${email}`, 'error')
+    showNotice(`账号检测失败 ${email}`, 'error')
   } finally {
     checkingAccounts.value[email] = false
   }
 }
 
 async function removeAccount(email) {
-  if (!window.confirm(`纭鍒犻櫎璐﹀彿 ${email} ?`)) return
+  if (!window.confirm(`确认删除账号 ${email} ?`)) return
   accountError.value = ''
   try {
     const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(email)}`, { method: 'DELETE' })
     if (!res.ok) {
-      let detail = '鍒犻櫎澶辫触'
+      let detail = '删除失败'
       try {
         const body = await res.json()
         if (body?.detail) detail = body.detail
@@ -881,10 +881,10 @@ function toggleSelectEmail(email) {
 
 async function batchDeleteSelected() {
   if (selectedEmails.value.length === 0) {
-    accountError.value = '璇峰厛閫夋嫨璐﹀彿'
+    accountError.value = '请先选择账号'
     return
   }
-  if (!window.confirm(`纭鍒犻櫎宸查€変腑鐨?${selectedEmails.value.length} 涓处鍙?`)) return
+  if (!window.confirm(`确认删除已选中的 ${selectedEmails.value.length} 个账号?`)) return
   accountError.value = ''
   try {
     const res = await fetch(`${API_BASE}/api/accounts/batch-delete`, {
@@ -893,7 +893,7 @@ async function batchDeleteSelected() {
       body: JSON.stringify({ emails: selectedEmails.value }),
     })
     if (!res.ok) {
-      let detail = '鎵归噺鍒犻櫎澶辫触'
+      let detail = '批量删除失败'
       try {
         const body = await res.json()
         if (body?.detail) detail = body.detail
@@ -915,7 +915,7 @@ async function clearAllAccounts() {
   try {
     const res = await fetch(`${API_BASE}/api/accounts`, { method: 'DELETE' })
     if (!res.ok) {
-      let detail = '娓呯┖澶辫触'
+      let detail = '清空失败'
       try {
         const body = await res.json()
         if (body?.detail) detail = body.detail
@@ -932,12 +932,12 @@ async function clearAllAccounts() {
 }
 
 async function clearAbnormalAccounts() {
-  if (!window.confirm('纭涓€閿垹闄ゆ墍鏈夊紓甯歌处鍙凤紙宸茶繃鏈?鏃犳晥/缂哄け锛?')) return
+  if (!window.confirm('确认一键删除所有异常账号（已过期/无效/缺失）?')) return
   accountError.value = ''
   try {
     const res = await fetch(`${API_BASE}/api/accounts/clear-abnormal`, { method: 'POST' })
     if (!res.ok) {
-      let detail = '鍒犻櫎寮傚父璐﹀彿澶辫触'
+      let detail = '删除异常账号失败'
       try {
         const body = await res.json()
         if (body?.detail) detail = body.detail
@@ -952,7 +952,7 @@ async function clearAbnormalAccounts() {
     showNotice(`已删除异常账号 ${Number(data?.deleted || 0)} 个`, 'success')
   } catch (e) {
     accountError.value = e.message
-    showNotice('鍒犻櫎寮傚父璐﹀彿澶辫触', 'error')
+    showNotice('删除异常账号失败', 'error')
   }
 }
 
@@ -967,7 +967,7 @@ async function exportAccountsTxt() {
       body: JSON.stringify({ count: n }),
     })
     if (!res.ok) {
-      let detail = '瀵煎嚭澶辫触'
+      let detail = '导出失败'
       try {
         const body = await res.json()
         if (body?.detail) detail = body.detail
@@ -987,7 +987,7 @@ async function exportAccountsTxt() {
     showNotice(`已导出前 ${n} 条账号`, 'success')
   } catch (e) {
     accountError.value = e.message
-    showNotice('瀵煎嚭璐﹀彿澶辫触', 'error')
+    showNotice('导出账号失败', 'error')
   } finally {
     exportingAccounts.value = false
   }
