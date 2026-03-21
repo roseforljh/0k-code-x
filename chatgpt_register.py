@@ -97,6 +97,7 @@ UPLOAD_API_TOKEN = _CONFIG["upload_api_token"]
 base_dir = os.path.dirname(os.path.abspath(__file__))
 _TOKEN_DIR = TOKEN_JSON_DIR if os.path.isabs(TOKEN_JSON_DIR) else os.path.join(base_dir, TOKEN_JSON_DIR)
 _OUTPUT_DIR = os.path.join(base_dir, "output")
+PENDING_OAUTH_FILE = os.path.join(_OUTPUT_DIR, "pending_oauth_accounts.txt")
 AK_FILE = os.path.join(_OUTPUT_DIR, "ak.txt")
 RK_FILE = os.path.join(_OUTPUT_DIR, "rk.txt")
 
@@ -376,42 +377,24 @@ def _save_codex_tokens(email: str, tokens: dict):
     refresh_token = tokens.get("refresh_token", "")
     id_token = tokens.get("id_token", "")
 
-    # 确保输出目录存在
     os.makedirs(_TOKEN_DIR, exist_ok=True)
     os.makedirs(_OUTPUT_DIR, exist_ok=True)
-
-def _delete_codex_tokens(email: str):
-    try:
-        if not os.path.isdir(TOKEN_JSON_DIR):
-            return
-        prefix = f"{email}-"
-        for name in os.listdir(TOKEN_JSON_DIR):
-            if name.startswith(prefix) and name.endswith('.json'):
-                try:
-                    os.remove(os.path.join(TOKEN_JSON_DIR, name))
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
 
     if not access_token:
         return
 
     payload = _decode_jwt_payload(access_token)
-    auth_info = payload.get("https://api.openai.com/auth", {})
+    auth_info = payload.get("https://api.openai.com/auth", {}) if isinstance(payload, dict) else {}
     account_id = auth_info.get("chatgpt_account_id", "")
 
-    exp_timestamp = payload.get("exp")
+    exp_timestamp = payload.get("exp") if isinstance(payload, dict) else None
     expired_str = ""
     if isinstance(exp_timestamp, int) and exp_timestamp > 0:
         from datetime import datetime, timezone, timedelta
-
         exp_dt = datetime.fromtimestamp(exp_timestamp, tz=timezone(timedelta(hours=8)))
         expired_str = exp_dt.strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
     from datetime import datetime, timezone, timedelta
-
     now = datetime.now(tz=timezone(timedelta(hours=8)))
     token_data = {
         "type": "codex",
@@ -424,59 +407,28 @@ def _delete_codex_tokens(email: str):
         "refresh_token": refresh_token,
     }
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    token_dir = TOKEN_JSON_DIR if os.path.isabs(TOKEN_JSON_DIR) else os.path.join(base_dir, TOKEN_JSON_DIR)
-    os.makedirs(token_dir, exist_ok=True)
-
-    token_path = os.path.join(token_dir, f"{email}-free.json")
-    with _file_lock:
-        with open(token_path, "w", encoding="utf-8") as f:
-            json.dump(token_data, f, ensure_ascii=False)
-
-    # 上传到 CPA 管理平台
-    if UPLOAD_API_URL:
-        _upload_token_json(token_path)
+    safe_email = re.sub(r'[^a-zA-Z0-9@._-]', '_', email)
+    filename = f"{safe_email}-free.json"
+    path = os.path.join(_TOKEN_DIR, filename)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(token_data, f, ensure_ascii=False, indent=2)
 
 
-def _upload_token_json(filepath):
-    """上传 Token JSON 文件到 CPA 管理平台"""
-    mp = None
-    try:
-        from curl_cffi import CurlMime
+def _append_pending_oauth_account(email: str, account_password: str, email_password: str = ""):
+    os.makedirs(_OUTPUT_DIR, exist_ok=True)
+    line = f"{email}----{account_password}----{email_password}----oauth=fail\n"
+    existing = set()
+    if os.path.exists(PENDING_OAUTH_FILE):
+        try:
+            with open(PENDING_OAUTH_FILE, 'r', encoding='utf-8') as f:
+                existing = {x.strip().split('----', 1)[0] for x in f if x.strip()}
+        except Exception:
+            existing = set()
+    if email in existing:
+        return
+    with open(PENDING_OAUTH_FILE, 'a', encoding='utf-8') as f:
+        f.write(line)
 
-        filename = os.path.basename(filepath)
-        mp = CurlMime()
-        mp.addpart(
-            name="file",
-            content_type="application/json",
-            filename=filename,
-            local_path=filepath,
-        )
-
-        session = curl_requests.Session()
-        if DEFAULT_PROXY:
-            session.proxies = {"http": DEFAULT_PROXY, "https": DEFAULT_PROXY}
-
-        resp = session.post(
-            UPLOAD_API_URL,
-            multipart=mp,
-            headers={"Authorization": f"Bearer {UPLOAD_API_TOKEN}"},
-            verify=False,
-            timeout=30,
-        )
-
-        if resp.status_code == 200:
-            with _print_lock:
-                print(f"  [CPA] Token JSON 已上传到 CPA 管理平台")
-        else:
-            with _print_lock:
-                print(f"  [CPA] 上传失败: {resp.status_code} - {resp.text[:200]}")
-    except Exception as e:
-        with _print_lock:
-            print(f"  [CPA] 上传异常: {e}")
-    finally:
-        if mp:
-            mp.close()
 
 
 def _generate_password(length=14):
@@ -758,7 +710,7 @@ def _probe_proxy(proxy: str | None, timeout: int = 12):
         })
         if r.status_code == 200:
             return True, 'proxy ok'
-        return False, f'proxy probe got status {r.status_code}'
+        return (True, 'proxy probe got 403 challenge; allow trial run') if r.status_code == 403 else (False, f'proxy probe got status {r.status_code}')
     except Exception as e:
         return False, f'proxy probe failed: {e}'
 
@@ -1850,7 +1802,8 @@ def _register_one(idx, total, proxy, output_file):
     try:
         ok_probe, probe_msg = _probe_proxy(proxy)
         if not ok_probe:
-            raise Exception(probe_msg)
+            with _print_lock:
+                print(f"[WARN] [proxy_probe] {probe_msg}，继续尝试真实注册")
         reg = ChatGPTRegister(proxy=proxy, tag=f"{idx}")
 
         # 1. 创建 CFEmail 临时邮箱
@@ -1893,6 +1846,10 @@ def _register_one(idx, total, proxy, output_file):
         if not oauth_ok:
             try:
                 _delete_codex_tokens(email)
+            except Exception:
+                pass
+            try:
+                _append_pending_oauth_account(email, chatgpt_password, email_pwd)
             except Exception:
                 pass
             raise Exception("oauth_failed: registration completed but token unavailable")

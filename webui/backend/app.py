@@ -495,7 +495,10 @@ def _perform_auto_maintain_once():
 
     _auto_log("[auto] checking remote codex status")
     results = _collect_remote_codex_status(base_url, api_key)
-    invalid_names = [x.get("name") for x in results if int(x.get("status_code") or 0) != 200 and x.get("name")]
+    remote_valid_count = sum(1 for x in results if int(x.get("status_code") or 0) == 200 and not x.get("is_invalid"))
+    with _auto_maintain_lock:
+        _auto_maintain_state.remote_valid_count = remote_valid_count
+    invalid_names = [x.get("name") for x in results if (int(x.get("status_code") or 0) != 200 or x.get("is_invalid")) and x.get("name")]
 
     if invalid_names:
         _auto_log(f"[auto] deleting invalid remote codex files: {len(invalid_names)}")
@@ -506,6 +509,8 @@ def _perform_auto_maintain_once():
 
     status_rows = _collect_remote_codex_status(base_url, api_key)
     remote_valid_count = sum(1 for x in status_rows if int(x.get("status_code") or 0) == 200 and not x.get("is_invalid"))
+    with _auto_maintain_lock:
+        _auto_maintain_state.remote_valid_count = remote_valid_count
 
     while remote_valid_count < int(settings["target_count"]):
         missing = int(settings["target_count"]) - remote_valid_count
@@ -532,12 +537,15 @@ def _perform_auto_maintain_once():
         for name in new_files:
             try:
                 if _push_local_codex_file_to_remote(base_url, api_key, name):
-                    _auto_log(f"[auto] pushed token: {name}")
+                    _delete_local_account_and_tokens_by_filename(name)
+                    _auto_log(f"[auto] pushed token and removed local account: {name}")
             except Exception as ex:
                 _auto_log(f"[auto] push failed for {name}: {ex}")
 
         status_rows = _collect_remote_codex_status(base_url, api_key)
         remote_valid_count = sum(1 for x in status_rows if int(x.get("status_code") or 0) == 200 and not x.get("is_invalid"))
+        with _auto_maintain_lock:
+            _auto_maintain_state.remote_valid_count = remote_valid_count
 
     with _auto_maintain_lock:
         _auto_maintain_state.remote_valid_count = remote_valid_count
@@ -621,6 +629,10 @@ def _accounts_file_path() -> str:
     return _resolve_output_file("registered_accounts.txt")
 
 
+def _pending_accounts_file_path() -> str:
+    return _resolve_output_file("pending_oauth_accounts.txt")
+
+
 def _parse_account_line(line: str):
     raw = line.strip()
     if not raw:
@@ -682,6 +694,63 @@ def _write_accounts_raw(rows: List[dict]):
 
 def _normalize_email(v: str) -> str:
     return (v or "").strip().lower()
+
+
+def _read_pending_accounts_raw():
+    rows = []
+    reg_path = _pending_accounts_file_path()
+    if not os.path.exists(reg_path):
+        return rows
+    with open(reg_path, "r", encoding="utf-8") as f:
+        for line in f:
+            row = _parse_account_line(line)
+            if row:
+                rows.append(row)
+    return rows
+
+
+def _write_pending_accounts_raw(rows: List[dict]):
+    os.makedirs(core._OUTPUT_DIR, exist_ok=True)
+    reg_path = _pending_accounts_file_path()
+    with open(reg_path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(_line_for_account(row) + "\n")
+
+
+def _delete_pending_account_by_email(email: str) -> bool:
+    key = _normalize_email(email)
+    rows = _read_pending_accounts_raw()
+    new_rows = [r for r in rows if _normalize_email(r.get("email", "")) != key]
+    if len(new_rows) == len(rows):
+        return False
+    _write_pending_accounts_raw(new_rows)
+    return True
+
+
+def _retry_pending_oauth_once(email: str):
+    key = _normalize_email(email)
+    rows = _read_pending_accounts_raw()
+    row = next((r for r in rows if _normalize_email(r.get("email", "")) == key), None)
+    if not row:
+        raise HTTPException(status_code=404, detail="pending account not found")
+    import chatgpt_register as regmod
+    reg = regmod.ChatGPTRegister(proxy=regmod.DEFAULT_PROXY, tag=str(row.get("email") or "").split('@')[0])
+    tokens = reg.perform_codex_oauth_login_http(str(row.get("email") or ""), str(row.get("account_password") or ""), mail_token=str(row.get("email") or ""))
+    if not (tokens and tokens.get("access_token")):
+        raise HTTPException(status_code=400, detail="oauth retry failed")
+    regmod._save_codex_tokens(str(row.get("email") or ""), tokens)
+    with _account_file_lock:
+        rows2 = _read_accounts_raw()
+        if not any(_normalize_email(x.get("email", "")) == key for x in rows2):
+            rows2.append({
+                "email": str(row.get("email") or "").strip(),
+                "account_password": str(row.get("account_password") or "").strip(),
+                "email_password": str(row.get("email_password") or "").strip(),
+                "oauth": "ok",
+            })
+            _write_accounts_raw(rows2)
+    _delete_pending_account_by_email(str(row.get("email") or ""))
+    return {"ok": True, "email": str(row.get("email") or "")}
 
 
 def _build_token_index(force: bool = False) -> Dict[str, List[Dict[str, Any]]]:
@@ -1632,9 +1701,16 @@ def list_accounts():
         }
         for row in rows
     ]
+    pending_rows = _read_pending_accounts_raw()
+    pending = []
+    for idx, row in enumerate(reversed(pending_rows), start=1):
+        item = dict(row)
+        item["index"] = idx
+        pending.append(item)
     return {
         "accounts": data,
         "summary": _accounts_summary(data),
+        "pending_oauth_accounts": pending,
     }
 
 
@@ -1745,6 +1821,18 @@ def clear_abnormal_accounts():
             return {"ok": True, "deleted": 0}
         _write_accounts_raw(kept)
     return {"ok": True, "deleted": deleted}
+
+
+@app.delete("/api/pending-oauth/{email}")
+def delete_pending_oauth_account(email: str):
+    if not _delete_pending_account_by_email(email):
+        raise HTTPException(status_code=404, detail="pending account not found")
+    return {"ok": True}
+
+
+@app.post("/api/pending-oauth/{email}/retry")
+def retry_pending_oauth_account(email: str):
+    return _retry_pending_oauth_once(email)
 
 
 @app.get("/api/accounts/{email}/tokens")
@@ -1887,14 +1975,20 @@ def push_single_codex_token(req: PushCodexTokenSingleRequest):
             raise HTTPException(status_code=400, detail=f"upload failed: {code} {text[:200]}")
 
         deleted = False
+        account_removed = False
         if req.delete_local_after_upload:
             try:
                 os.remove(path)
                 deleted = True
+                try:
+                    _delete_local_account_and_tokens_by_filename(filename)
+                    account_removed = True
+                except Exception:
+                    account_removed = False
             except Exception as ex:
                 raise HTTPException(status_code=400, detail=f"upload ok but delete failed: {ex}")
 
-        return {"ok": True, "file": filename, "uploaded": True, "deleted": deleted}
+        return {"ok": True, "file": filename, "uploaded": True, "deleted": deleted, "account_removed": account_removed}
     except HTTPException:
         raise
     except urllib.error.HTTPError as e:

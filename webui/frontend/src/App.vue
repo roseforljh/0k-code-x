@@ -27,6 +27,7 @@ const wsRef = ref(null)
 const errorMsg = ref('')
 
 const accounts = ref([])
+const pendingOauthAccounts = ref([])
 const accountSummary = reactive({
   total_accounts: 0,
   normal_accounts: 0,
@@ -208,6 +209,7 @@ async function fetchAccounts() {
   if (!res.ok) throw new Error('加载账号失败')
   const data = await res.json()
   accounts.value = Array.isArray(data?.accounts) ? data.accounts : []
+  pendingOauthAccounts.value = Array.isArray(data?.pending_oauth_accounts) ? data.pending_oauth_accounts : []
   accountSummary.total_accounts = Number(data?.summary?.total_accounts || 0)
   accountSummary.normal_accounts = Number(data?.summary?.normal_accounts || 0)
   accountSummary.abnormal_accounts = Number(data?.summary?.abnormal_accounts || 0)
@@ -502,6 +504,30 @@ async function deleteInvalidRemoteFiles() {
     showNotice('删除远端文件失败', 'error')
   } finally {
     deletingRemoteFiles.value = false
+  }
+}
+
+async function retryPendingOauth(email) {
+  try {
+    const res = await fetch(`${API_BASE}/api/pending-oauth/${encodeURIComponent(email)}/retry`, { method: 'POST', credentials: 'include' })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data?.detail || '重试 OAuth 失败')
+    showNotice(`已完成 OAuth 重试：${email}`, 'success')
+    await fetchAccounts().catch(() => {})
+  } catch (e) {
+    showNotice(`重试 OAuth 失败：${email}`, 'error')
+  }
+}
+
+async function deletePendingOauth(email) {
+  try {
+    const res = await fetch(`${API_BASE}/api/pending-oauth/${encodeURIComponent(email)}`, { method: 'DELETE', credentials: 'include' })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data?.detail || '删除待处理账号失败')
+    showNotice(`已删除待处理账号：${email}`, 'success')
+    await fetchAccounts().catch(() => {})
+  } catch (e) {
+    showNotice(`删除待处理账号失败：${email}`, 'error')
   }
 }
 
@@ -1217,6 +1243,31 @@ onUnmounted(() => {
                 <div class="summary-tile summary-bad">
                   <span>异常账号数量</span>
                   <strong>{{ accountSummary.abnormal_accounts }}</strong>
+                </div>
+              </div>
+
+
+              <div v-if="pendingOauthAccounts.length" class="card" style="margin-top:16px; border:1px dashed var(--border-color); box-shadow:none;">
+                <h3 style="margin-bottom:12px;">待处理 OAuth（注册成功但 Token 未完成）</h3>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Email</th><th>账号密码</th><th>状态</th><th>操作</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="item in pendingOauthAccounts" :key="item.email">
+                        <td>{{ item.email }}</td>
+                        <td>{{ item.account_password }}</td>
+                        <td><span class="status-pill status-unknown">待补 OAuth</span></td>
+                        <td>
+                          <div class="row-actions">
+                            <button class="btn btn-detect" @click="retryPendingOauth(item.email)">重试 OAuth</button>
+                            <button class="btn btn-danger" @click="deletePendingOauth(item.email)">删除</button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
